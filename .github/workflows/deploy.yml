@@ -1,0 +1,64 @@
+name: Deploy to Ubuntu Server
+
+on:
+  push:
+    branches:
+      - main  # main 브랜치에 푸시될 때 트리거
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps: 
+    # 코드 체크아웃
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    # JDK 17 설정
+    - name: Set up JDK 17
+      uses: actions/setup-java@v1
+      with:
+        java-version: '17'
+
+    - name: Build with Gradle
+      run: |
+        chmod +x ./gradlew
+        ./gradlew build
+
+    # 비밀키 생성
+    - name: Set SSH key permissions
+      # ~/.ssh/id_rsa : 비밀키 생성
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa 
+        chmod 600 ~/.ssh/id_rsa
+
+    - name: Add SSH key
+      uses: webfactory/ssh-agent@v0.5.3
+      with:
+        ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+    # 운영서버 : 13.125.1.159
+    - name: Add known_hosts
+      run: |
+        ssh-keyscan -t ed25519 13.125.1.159 >> ~/.ssh/known_hosts
+
+    # grep 제거 후 첫번째 줄 / 에러시 넘어감(true)
+    - name: 기존프로세스 종료 
+      run: |
+        kill -9 $(ps -ef | grep devops | grep -v grep | head -n 1 | awk '{print $2}') || true
+
+    # 복사 jar파일에 관한것 -> ubuntu#13.125.1.159에 복사
+    - name: Deploy to Server
+      run: scp build/libs/*.jar ubuntu@13.125.1.159:~/
+
+    # 자바에 jar가 있으면 kill
+    # 실행결과를 log.txt에 저장
+    # 2 : error
+
+    - name: Run SSH commands
+      run: |
+        ssh -i ~/.ssh/id_rsa ubuntu@13.125.1.159 << 'EOF'
+          pkill -f 'java -jar' || true
+          nohup java -jar ~/devops_step0-0.0.1-SNAPSHOT.jar > log.txt 2>&1 &
+        EOF
